@@ -13,12 +13,102 @@ from mmcv.transforms import LoadImageFromFile
 from mmseg.registry import TRANSFORMS
 from mmseg.utils import datafrombytes
 
+# 加入LoadTiffImageFromFile方法
+from osgeo import gdal
+gdal.PushErrorHandler("CPLQuietErrorHandler") # 忽略GDAL的一些警告
 try:
     from osgeo import gdal
 except ImportError:
     gdal = None
 
+@TRANSFORMS.register_module()
+class LoadTiffImageFromFile(BaseTransform):
+    def __init__(self,
+                 to_float32: bool = False,
+                 color_type: str = 'color',
+                 imdecode_backend: str = 'cv2',
+                 file_client_args: Optional[dict] = None,
+                 ignore_empty: bool = False,
+                 *,
+                 backend_args: Optional[dict] = None) -> None:
+        self.ignore_empty = ignore_empty
+        self.to_float32 = to_float32
+        self.color_type = color_type
+        self.imdecode_backend = imdecode_backend
 
+        self.file_client_args: Optional[dict] = None
+        self.backend_args: Optional[dict] = None
+        if file_client_args is not None:
+            warnings.warn(
+                '"file_client_args" will be deprecated in future. '
+                'Please use "backend_args" instead', DeprecationWarning)
+            if backend_args is not None:
+                raise ValueError(
+                    '"file_client_args" and "backend_args" cannot be set '
+                    'at the same time.')
+
+            self.file_client_args = file_client_args.copy()
+        if backend_args is not None:
+            self.backend_args = backend_args.copy()
+
+    def transform(self, results: dict) -> Optional[dict]:
+        """Functions to load image.
+
+        Args:
+            results (dict): Result dict from
+                :class:`mmengine.dataset.BaseDataset`.
+
+        Returns:
+            dict: The dict contains loaded image and meta information.
+        """
+
+        filename = results['img_path']
+        try:
+            if self.file_client_args is not None:
+                file_client = fileio.FileClient.infer_client(
+                    self.file_client_args, filename)
+                img_bytes_file = file_client.get(filename)
+               
+            else:
+                img_bytes_file = fileio.get(
+                    filename, backend_args=self.backend_args)
+ 
+            img_gadl=gdal.Open(filename)
+            img_gadl=np.array(img_gadl.ReadAsArray())
+            img_gadl=img_gadl.swapaxes(1,2)#先翻转xy轴
+            img_gadl=img_gadl.transpose(2,1,0)#再进行reshape
+            img = img_gadl
+
+        except Exception as e:
+            if self.ignore_empty:
+                return None
+            else:
+                raise e
+        # in some cases, images are not read successfully, the img would be
+        # `None`, refer to https://github.com/open-mmlab/mmpretrain/issues/1427
+        assert img is not None, f'failed to load image: {filename}'
+        if self.to_float32:
+            img = img.astype(np.float32)
+
+        results['img'] = img
+        results['img_shape'] = img.shape[:2]
+        results['ori_shape'] = img.shape[:2]
+        return results
+
+    def __repr__(self):
+        repr_str = (f'{self.__class__.__name__}('
+                    f'ignore_empty={self.ignore_empty}, '
+                    f'to_float32={self.to_float32}, '
+                    f"color_type='{self.color_type}', "
+                    f"imdecode_backend='{self.imdecode_backend}', ")
+
+        if self.file_client_args is not None:
+            repr_str += f'file_client_args={self.file_client_args})'
+        else:
+            repr_str += f'backend_args={self.backend_args})'
+
+        return repr_str
+  
 @TRANSFORMS.register_module()
 class LoadAnnotations(MMCV_LoadAnnotations):
     """Load annotations for semantic segmentation provided by dataset.
