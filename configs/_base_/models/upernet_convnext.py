@@ -1,4 +1,4 @@
-norm_cfg = dict(type='SyncBN', requires_grad=True)
+norm_cfg = dict(type='BN', requires_grad=True) # 使用单卡需要骨架模型里将SyncBN改成BN
 custom_imports = dict(imports='mmpretrain.models', allow_failed_imports=False)
 checkpoint_file = 'https://download.openmmlab.com/mmclassification/v0/convnext/downstream/convnext-base_3rdparty_32xb128-noema_in1k_20220301-2a0ee547.pth'  # noqa
 data_preprocessor = dict(
